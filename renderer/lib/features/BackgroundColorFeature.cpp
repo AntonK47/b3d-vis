@@ -19,9 +19,8 @@ auto b3d::renderer::BackgroundColorFeature::beginUpdate() -> void
 	coloringInfo_ = sharedParameters_->get<ColoringInfo>("coloringInfo");
 }
 
-auto b3d::renderer::BackgroundColorFeature::initialize(b3d::renderer::RenderingDataBuffer& sharedParameters) -> void
+auto b3d::renderer::BackgroundColorFeature::onInitialize() -> void
 {
-	RenderFeature::initialize(sharedParameters);
 	coloringInfo_ = sharedParameters_->get<ColoringInfo>("coloringInfo");
 	if (coloringInfo_ == nullptr)
 	{

@@ -14,7 +14,7 @@ namespace b3d::renderer
 		explicit BackgroundColorFeature(const std::string& name, std::array<ColorRGB, 2> colors);
 
 		auto beginUpdate() -> void override;
-		auto initialize(b3d::renderer::RenderingDataBuffer& sharedParameters) -> void override;
+		auto onInitialize() -> void override;
 		auto gui() -> void override;
 		[[nodiscard]] auto hasGui() const -> bool override;
 

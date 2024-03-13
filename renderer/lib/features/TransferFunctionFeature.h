@@ -11,7 +11,7 @@ namespace b3d::renderer
 	class TransferFunctionFeature final : public RenderFeature
 	{
 	public:
-		explicit TransferFunctionFeature(const std::string& name, const size_t dataPointsCount = 10);
+		explicit TransferFunctionFeature(const std::string& name, const size_t dataPointsCount = 32);
 		auto beginUpdate() -> void override;
 		auto endUpdate() -> void override;
 		auto gui() -> void override;

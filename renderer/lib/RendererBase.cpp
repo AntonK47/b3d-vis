@@ -27,6 +27,10 @@ auto RendererBase::initialize(RenderingDataBuffer* renderData, const DebugInitia
 auto RendererBase::deinitialize() -> void
 {
 	onDeinitialize();
+	for (const auto& feature : renderFeatures_)
+	{
+		feature->deinitialize();
+	}
 }
 
 auto RendererBase::gui() -> void
