@@ -16,20 +16,19 @@ auto b3d::renderer::RenderTargetFeature::beginUpdate() -> void
 	}
 
 	// TODO: minmaxRT not considered yet
-	std::array<cudaArray_t, 2> cudaArrays{};
 	{
 		OWL_CUDA_CHECK(
 			cudaGraphicsMapResources(1, &renderTargets_->colorRt.target));
 
 		for (auto i = 0; i < renderTargets_->colorRt.extent.depth; i++)
 		{
-			OWL_CUDA_CHECK(cudaGraphicsSubResourceGetMappedArray(&cudaArrays[i], renderTargets_->colorRt.target, i, 0));
+			OWL_CUDA_CHECK(cudaGraphicsSubResourceGetMappedArray(&cudaColorRT_.surfaces[i].buffer, renderTargets_->colorRt.target, i, 0));
 
 			auto resDesc = cudaResourceDesc{};
 			resDesc.resType = cudaResourceTypeArray;
-			resDesc.res.array.array = cudaArrays[i];
+			resDesc.res.array.array = cudaColorRT_.surfaces[i].buffer;
 
-			OWL_CUDA_CHECK(cudaCreateSurfaceObject(&cudaColorRT_.surfaces[i], &resDesc))
+			OWL_CUDA_CHECK(cudaCreateSurfaceObject(&cudaColorRT_.surfaces[i].surface, &resDesc))
 		}
 	}
 	cudaColorRT_.extent = renderTargets_->colorRt.extent;
@@ -44,7 +43,7 @@ auto b3d::renderer::RenderTargetFeature::endUpdate() -> void
 
 	for (auto i = 0; i < renderTargets_->colorRt.extent.depth; i++)
 	{
-		OWL_CUDA_CHECK(cudaDestroySurfaceObject(cudaColorRT_.surfaces[i]));
+		OWL_CUDA_CHECK(cudaDestroySurfaceObject(cudaColorRT_.surfaces[i].surface));
 	}
 	OWL_CUDA_CHECK(cudaGraphicsUnmapResources(1, &renderTargets_->colorRt.target));
 }

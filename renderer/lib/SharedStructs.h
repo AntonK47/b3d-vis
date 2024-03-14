@@ -27,9 +27,17 @@ namespace b3d::renderer
 		uint32_t depth;
 	};
 
+	struct CudaSurfaceResource
+	{
+		cudaArray_t buffer;
+		cudaSurfaceObject_t surface;
+		size_t width{};
+		size_t height{};
+	};
+
 	struct CudaStereoRenderTarget
 	{
-		std::array<cudaSurfaceObject_t, 2> surfaces;
+		std::array<CudaSurfaceResource, 2> surfaces;
 		Extent extent;
 	};
 
@@ -37,7 +45,7 @@ namespace b3d::renderer
 	{
 		cudaGraphicsResource_t target;
 		Extent extent;
-		void* nativeHandle{nullptr};
+		void* nativeHandle{ nullptr };
 	};
 
 	// ExternalTexture is read only
@@ -67,7 +75,7 @@ namespace b3d::renderer
 		cudaExternalSemaphore_t signalSemaphore;
 		uint64_t fenceValue{ 0 };
 	};
-	
+
 	struct VolumeTransform
 	{
 		owl::affine3f worldMatTRS{};
@@ -100,12 +108,12 @@ namespace b3d::renderer
 		ColoringMode coloringMode;
 		owl::vec4f singleColor;
 		float selectedColorMap;
-		std::array<ColorRGBA, 2> backgroundColors; 
+		std::array<ColorRGBA, 2> backgroundColors;
 	};
 
 	struct ColorMapInfos
 	{
-		std::vector<std::string> *colorMapNames{};
+		std::vector<std::string>* colorMapNames{};
 		int colorMapCount;
 		float firstColorMapYTextureCoordinate;
 		float colorMapHeightNormalized;

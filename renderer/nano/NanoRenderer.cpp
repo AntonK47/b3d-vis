@@ -25,6 +25,12 @@
 
 #include <OwlExtensions.h>
 
+#include "FoveatedRendering.h"
+
+
+#define FOVEATED
+
+
 extern "C" char NanoRenderer_ptx[];
 extern "C" uint8_t NanoRenderer_optixir[];
 extern "C" uint32_t NanoRenderer_optixir_length;
@@ -44,7 +50,7 @@ namespace
 
 		std::array<float, 2> sampleRemapping{ 0.0f,0.1f };
 
-
+		std::array<float, 2> fovealPoint{ 0.0f,0.0f };
 
 		SampleIntegrationMethod sampleIntegrationMethode{ SampleIntegrationMethod::maximumIntensityProjection };
 	};
@@ -68,11 +74,11 @@ namespace
 	{
 		//TODO: Let's use shared parameters to grab an initial volume path from the viewer
 		// const auto testFile = std::filesystem::path{ "D:/datacubes/n4565_cut/funny.nvdb" };
-		// const auto testFile =
+		const auto testFile =
 		std::filesystem::path{ "D:/datacubes/n4565_cut/filtered_level_0_224_257_177_id_7_upscale.fits.nvdb" };
 		//std::filesystem::path{ "C:/Users/anton/Downloads/chameleon_1024x1024x1080_uint16.nvdb" };
 		//std::filesystem::path{ "C:/Users/anton/Downloads/carp_256x256x512_uint16.nvdb" };
-		const auto testFile = std::filesystem::path{ "D:/datacubes/n4565_cut/nano_level_0_224_257_177.nvdb" };
+		//const auto testFile = std::filesystem::path{ "D:/datacubes/n4565_cut/nano_level_0_224_257_177.nvdb" };
 		// const auto testFile = std::filesystem::path{ "D:/datacubes/ska/40gb/sky_ldev_v2.nvdb" };
 
 
@@ -209,13 +215,25 @@ auto NanoRenderer::prepareGeometry() -> void
 	const auto geometryType =
 		owlGeomTypeCreate(context, OWL_GEOM_USER, sizeof(GeometryData), geometryVars.data(), geometryVars.size());
 
+
+
+#ifdef FOVEATED
+	const auto rayGenerationVars = std::array{
+		OWLVarDecl{ "frameBufferSize", OWL_INT2, OWL_OFFSETOF(RayGenerationFoveatedData, frameBufferSize) },
+		OWLVarDecl{ "world", OWL_GROUP, OWL_OFFSETOF(RayGenerationFoveatedData, world) },
+		OWLVarDecl{ "foveal", OWL_FLOAT2, OWL_OFFSETOF(RayGenerationFoveatedData, foveal) },
+	};
+	const auto rayGen = owlRayGenCreate(context, optixirModule, "rayGenerationFoveated", sizeof(RayGenerationFoveatedData),
+		rayGenerationVars.data(), rayGenerationVars.size());
+#else
 	const auto rayGenerationVars = std::array{
 		OWLVarDecl{ "frameBufferSize", OWL_INT2, OWL_OFFSETOF(RayGenerationData, frameBufferSize) },
 		OWLVarDecl{ "world", OWL_GROUP, OWL_OFFSETOF(RayGenerationData, world) },
 	};
-
 	const auto rayGen = owlRayGenCreate(context, optixirModule, "rayGeneration", sizeof(RayGenerationData),
 		rayGenerationVars.data(), rayGenerationVars.size());
+#endif
+
 
 	nanoContext_.rayGen = rayGen;
 
@@ -302,6 +320,8 @@ auto NanoRenderer::onRender() -> void
 {
 	gpuTimers_.nextFrame();
 
+
+
 	const auto volumeTransform = renderData_->get<VolumeTransform>("volumeTransform");
 	trs_ = volumeTransform->worldMatTRS * renormalizeScale_;
 
@@ -329,13 +349,18 @@ auto NanoRenderer::onRender() -> void
 
 	auto renderTargetFeatureParams = renderTargetFeature_->getParamsData();
 
-	const auto fbSize = owl2i{ static_cast<int32_t>(renderTargetFeatureParams.colorRT.extent.width),
-							   static_cast<int32_t>(renderTargetFeatureParams.colorRT.extent.height) };
-	owlRayGenSet2i(nanoContext_.rayGen, "frameBufferSize", fbSize);
+
+	
+
+#ifdef FOVEATED
+	const auto foveal = owl2f{ guiData.fovealPoint[0], guiData.fovealPoint[1] };
+	owlRayGenSet2f(nanoContext_.rayGen, "foveal", foveal);
+#endif
+
 
 	owlBuildSBT(nanoContext_.context);
 
-	
+
 
 	owlParamsSetRaw(nanoContext_.launchParams, "colormaps", &colorMapParams.colorMapTexture);
 	owlParamsSet2f(nanoContext_.launchParams, "sampleRemapping",
@@ -358,52 +383,68 @@ auto NanoRenderer::onRender() -> void
 
 
 
-	constexpr auto deviceId = 0;
+	constexpr auto deviceId = 0; //TODO: Research on device id, in multi gpu system it might be tricky
 	const auto stream = owlParamsGetCudaStream(nanoContext_.launchParams, deviceId);
 	const auto record = gpuTimers_.record("basic owl rt", stream);
 
-
-	auto rcd0 = RayCameraData{};
 	const auto view = renderData_->get<View>("view");
+	assert(view->cameras.size() > 0);
 
-	if (view->cameras[0].directionsAvailable)
-	{
-		rcd0 = { view->cameras[0].origin, view->cameras[0].dir00, view->cameras[0].dirDu, view->cameras[0].dirDv };
-	}
-	else
-	{
-		rcd0 = createRayCameraData(view->cameras[0], renderTargetFeatureParams.colorRT.extent);
-	}
+	auto rayCameraData = std::array<RayCameraData, 2>{};
+	const auto cameraIndices = view->mode == RenderMode::stereo ? std::vector{ 0,1 } : std::vector{ 0 };
+	assert(view->mode == RenderMode::stereo ? renderTargetFeatureParams.colorRT.extent.depth > 1: true);
 
-	owlParamsSetRaw(nanoContext_.launchParams, "cameraData", &rcd0);
-	owlParamsSetRaw(nanoContext_.launchParams, "surfacePointer", &renderTargetFeatureParams.colorRT.surfaces[0]);
+#ifdef FOVEATED
+	const auto r = foveatedFeature_->getLpResources()[0];
+	const auto fbSize = owl2i{static_cast<int32_t>(renderTargetFeatureParams.colorRT.extent.width),
+							   static_cast<int32_t>(renderTargetFeatureParams.colorRT.extent.height)};
+	const auto lrSize = owl2i{static_cast<int32_t>(r.surface.width),
+							   static_cast<int32_t>(r.surface.height)};
+	owlRayGenSet2i(nanoContext_.rayGen, "frameBufferSize", lrSize);
 
-	auto rcd1 = RayCameraData{};
-	if (view->mode == RenderMode::stereo && renderTargetFeatureParams.colorRT.extent.depth > 1)
+#else
+	const auto fbSize = owl2i{static_cast<int32_t>(renderTargetFeatureParams.colorRT.extent.width),
+							   static_cast<int32_t>(renderTargetFeatureParams.colorRT.extent.height)};
+	owlRayGenSet2i(nanoContext_.rayGen, "frameBufferSize", fbSize);
+
+#endif
+
+	for (const auto cameraIndex : cameraIndices)
 	{
-		if (view->cameras[1].directionsAvailable)
+		assert(cameraIndex < view->cameras.size());
+		const auto& camera = view->cameras[cameraIndex];
+
+		if (camera.directionsAvailable)
 		{
-			rcd1 = { view->cameras[1].origin, view->cameras[1].dir00, view->cameras[1].dirDu, view->cameras[1].dirDv };
+			rayCameraData[cameraIndex] = { camera.origin, camera.dir00, camera.dirDu, camera.dirDv };
 		}
 		else
 		{
-			rcd1 = createRayCameraData(view->cameras[1], renderTargetFeatureParams.colorRT.extent);
+			rayCameraData[cameraIndex] = createRayCameraData(camera,
+				Extent
+				{
+					static_cast<uint32_t>(fbSize.x),
+					static_cast<uint32_t>(fbSize.y),
+					1
+				}/*renderTargetFeatureParams.colorRT.extent*/);
 		}
 	}
 
 	record.start();
-
-	owlAsyncLaunch2D(nanoContext_.rayGen, fbSize.x, fbSize.y, nanoContext_.launchParams);
-
-	if (view->mode == RenderMode::stereo && renderTargetFeatureParams.colorRT.extent.depth > 1)
+	for (const auto cameraIndex : cameraIndices)
 	{
-		owlParamsSetRaw(nanoContext_.launchParams, "cameraData", &rcd1);
-		owlParamsSetRaw(nanoContext_.launchParams, "surfacePointer", &renderTargetFeatureParams.colorRT.surfaces[1]);
+		assert(cameraIndex < renderTargetFeatureParams.colorRT.surfaces.size());
+		owlParamsSetRaw(nanoContext_.launchParams, "cameraData", &rayCameraData[cameraIndex]);
 
-		owlAsyncLaunch2D(nanoContext_.rayGen, fbSize.x, fbSize.y, nanoContext_.launchParams);
+		const auto lpResource = foveatedFeature_->getLpResources()[cameraIndex];
+
+		owlParamsSetRaw(nanoContext_.launchParams, "surfacePointer", &lpResource.surface.surface);
+		//owlParamsSetRaw(nanoContext_.launchParams, "surfacePointer", &renderTargetFeatureParams.colorRT.surfaces[cameraIndex]);
+		
+		owlAsyncLaunch2D(nanoContext_.rayGen, lrSize.x, lrSize.y, nanoContext_.launchParams);
+		
+		foveatedFeature_->resolve(renderTargetFeatureParams.colorRT.surfaces[cameraIndex], fbSize.x, fbSize.y, stream, foveal.x, foveal.y);
 	}
-
-
 	record.stop();
 }
 
@@ -442,6 +483,20 @@ auto NanoRenderer::onGui() -> void
 	ImGui::RadioButton("Intensity Integration", reinterpret_cast<int*>(&guiData.sampleIntegrationMethode), static_cast<int>(SampleIntegrationMethod::transferIntegration));
 	ImGui::EndGroup();
 	ImGui::Separator();
+	ImGui::Text("Hold SPACE to move foveal point with mouse.");
+	ImGui::Text(std::format("foveal x:{:.2} y:{:.2}", guiData.fovealPoint[0], guiData.fovealPoint[1]).c_str());
+	ImGui::Separator();
+
+	if (ImGui::GetIO().KeysDown[ImGuiKey_Space])
+	{
+		const auto mousePosition = ImGui::GetMousePos();
+
+		const auto displaySize = ImGui::GetIO().DisplaySize;
+
+		guiData.fovealPoint[0] = mousePosition.x / static_cast<float>(displaySize.x) * 2.0f - 1.0f;
+		guiData.fovealPoint[1] = (1.0 - mousePosition.y / static_cast<float>(displaySize.y)) * 2.0f - 1.0f;
+
+	}
 
 	ImGui::DragFloatRange2("Sample Remapping", &guiData.sampleRemapping[0], &guiData.sampleRemapping[1], 0.0001, -1.0f, 1.0f, "%.4f");
 

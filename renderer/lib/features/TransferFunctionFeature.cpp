@@ -84,7 +84,7 @@ auto TransferFunctionFeature::endUpdate() -> void
 		return;
 	}
 	OWL_CUDA_CHECK(cudaDestroyTextureObject(transferFunctionCudaTexture_));
-	cudaGraphicsUnmapResources(1, &transferFunctionTexture_->target);
+	OWL_CUDA_CHECK(cudaGraphicsUnmapResources(1, &transferFunctionTexture_->target));
 
 }
 

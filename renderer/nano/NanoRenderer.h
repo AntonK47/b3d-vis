@@ -6,6 +6,7 @@
 
 #include <CudaGpuTimers.h>
 
+#include <FoveatedRendering.h>
 #include "features/BackgroundColorFeature.h"
 #include "features/ColorMapFeature.h"
 #include "features/RenderSyncFeature.h"
@@ -34,7 +35,8 @@ namespace b3d::renderer
 			transferFunctionFeature_ = addFeature<TransferFunctionFeature>("Transfer Function");
 			backgroundColorFeature_ = addFeature<BackgroundColorFeature>(
 				"Background Color", std::array<ColorRGB, 2>{ { { 0.572f, 0.100f, 0.750f }, { 0.0f, 0.3f, 0.3f } } });
-			renderSyncFeature_ = addFeatureWithDependency<RenderSyncFeature>({renderTargetFeature_, colorMapFeature_, transferFunctionFeature_, backgroundColorFeature_},"Main Synchronization");
+			foveatedFeature_ = addFeature<FoveatedRenderingFeature>();
+			renderSyncFeature_ = addFeatureWithDependency<RenderSyncFeature>({renderTargetFeature_, colorMapFeature_, transferFunctionFeature_, backgroundColorFeature_, foveatedFeature_},"Main Synchronization");
 		}
 	protected:
 		auto onRender() -> void override;
@@ -59,5 +61,6 @@ namespace b3d::renderer
 		ColorMapFeature* colorMapFeature_;
 		TransferFunctionFeature* transferFunctionFeature_;
 		BackgroundColorFeature* backgroundColorFeature_;
+		FoveatedRenderingFeature* foveatedFeature_;
 	};
 } // namespace b3d::renderer

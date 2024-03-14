@@ -32,12 +32,32 @@ embed_optixir(
 set_property(TARGET nano-optixir PROPERTY FOLDER "Renderer/PTX Targets")
 set_property(TARGET nano-optixir_optixir PROPERTY FOLDER "Renderer/PTX Targets")
 
-set_source_files_properties(NanoRenderer.cu
-  PROPERTIES CUDA_SOURCE_PROPERTY_FORMAT OBJ
-  )
+set_source_files_properties(
+	NanoRenderer.cu
+	PROPERTIES CUDA_SOURCE_PROPERTY_FORMAT OBJ
+ )
+
+ 
 
 find_package(OpenVDB CONFIG REQUIRED COMPONENTS nanovdb)
 find_package(imgui CONFIG REQUIRED)
+
+# set_source_files_properties(
+#	 FoveatedRendering.cu
+#	 PROPERTIES CUDA_SOURCE_PROPERTY_FORMAT OBJ
+# )
+
+
+add_library(cudaCode FoveatedRendering.cu FoveatedRendering.h FoveatedHelper.cuh FoveatedHelper.cu)
+target_compile_features(cudaCode PUBLIC cxx_std_20)
+target_include_directories(cudaCode PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(cudaCode
+	PRIVATE
+		B3D::Renderer::Library
+)
+set_property(TARGET cudaCode PROPERTY CUDA_STANDARD 20)
+
 
 add_b3d_renderer(
 	NAME
@@ -47,6 +67,7 @@ add_b3d_renderer(
 	HEADERS
 		NanoRenderer.h
 	LIBRARIES
+		cudaCode
 		nano-ptx
 		nano-optixir
 		OpenVDB::nanovdb

@@ -43,7 +43,7 @@ auto CudaSurfaceObjectWriteTestRenderer::onRender() -> void
 		auto gridDim =
 			dim3{ fbSize.x / 32 + gridDimXAdd, fbSize.y / 32 + gridDimYAdd };
 		auto blockDim = dim3{ 32, 32 };
-		writeVertexBuffer<<<gridDim, blockDim>>>(renderTargetFeatureParams.colorRT.surfaces[0], fbSize.x, fbSize.y);
+		writeVertexBuffer<<<gridDim, blockDim>>>(renderTargetFeatureParams.colorRT.surfaces[0].surface, fbSize.x, fbSize.y);
 		cudaDeviceSynchronize();
 		cudaRet = cudaGetLastError();
 	}

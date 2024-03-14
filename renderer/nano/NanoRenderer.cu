@@ -15,6 +15,8 @@
 
 #include "SampleAccumulators.h"
 #include "SamplerMapper.h"
+//#include "FoveatedHelper.cuh"
+
 
 using namespace b3d::renderer::nano;
 using namespace owl;
@@ -36,6 +38,7 @@ struct PerRayData
 	vec3f color;
 	float alpha;
 	bool isBackground{ false };
+	float stepsScale{1.0};
 };
 
 __device__ inline auto confine(const nanovdb::BBox<nanovdb::Coord>& bbox, nanovdb::Vec3f& sample) -> void
@@ -108,10 +111,11 @@ OPTIX_RAYGEN_PROGRAM(hitCountRayGen)()
 {
 }
 
+
+
 OPTIX_RAYGEN_PROGRAM(rayGeneration)()
 {
 	const auto& self = owl::getProgramData<RayGenerationData>();
-
 
 	const auto& camera = optixLaunchParams.cameraData;
 	const auto pixelId = owl::getLaunchIndex();
@@ -130,8 +134,130 @@ OPTIX_RAYGEN_PROGRAM(rayGeneration)()
 	const auto pattern = (pixelId.x / 8) ^ (pixelId.y / 8);
 	const auto bgColor = (pattern & 1) ? bg1 : bg2;
 
-	const auto color = prd.isBackground ? bgColor :  bgColor * (1.0f - prd.alpha) + prd.alpha * vec4f(prd.color, 1.0f);
+	const auto color = prd.isBackground ? bgColor : bgColor * (1.0f - prd.alpha) + prd.alpha * vec4f(prd.color, 1.0f);
 	surf2Dwrite(owl::make_rgba(color), optixLaunchParams.surfacePointer, sizeof(uint32_t) * pixelId.x, pixelId.y);
+}
+
+
+template<typename T>
+__device__ inline auto length(const owl::vec_t<T, 2>& v) -> T
+{
+	return owl::common::polymorphic::sqrt(dot(v, v));
+}
+
+__device__ auto logMap(const float scaleRatio, const vec2f& coordinate, const vec2f& foveal, const vec2f& resolution)
+-> vec2f
+{
+	const auto maxL = max(
+		max(
+			length((vec2f(1, 1) - foveal) * resolution),
+			length((vec2f(1, -1) - foveal) * resolution)),
+		max(
+			length((vec2f(-1, 1) - foveal) * resolution),
+			length((vec2f(-1, -1) - foveal) * resolution)));
+	const float L = log(maxL * 0.5);
+	auto uv = scaleRatio * coordinate / resolution;
+
+	uv.x = pow(uv.x, 1.0f / 4.0f);
+	constexpr auto pi2 = nanovdb::pi<float>() * 2.0f;
+	const auto x = exp(uv.x * L) * cos(uv.y * pi2);
+	const auto y = exp(uv.x * L) * sin(uv.y * pi2);
+	auto logCoordinate = vec2f(x, y) + (foveal + vec2f(1.f)) * 0.5f * resolution;
+
+	return logCoordinate;
+}
+
+OPTIX_RAYGEN_PROGRAM(rayGenerationFoveated)()
+{
+	const auto& self = owl::getProgramData<RayGenerationFoveatedData>();
+
+	const auto foveal = self.foveal;
+	const auto resolution = vec2f(self.frameBufferSize.x, self.frameBufferSize.y);
+	/*const auto maxL = max(
+		max(length((vec2f(1, 1) - foveal) * resolution),
+			length((vec2f(1, -1) - foveal) * resolution)
+		),
+		max(length((vec2f(-1, 1) - foveal) * resolution),
+			length((vec2f(-1, -1) - foveal) * resolution)
+		)
+	);
+	const auto L = log(maxL * 0.5);*/
+
+
+	const auto& camera = optixLaunchParams.cameraData;
+	const auto pixelIndex = owl::getLaunchIndex();
+	constexpr auto scaleRatio = 1.0f;//TODO: this value should be passed over launch params
+
+	/*
+	const auto screen = (vec2f(pixelIndex) + vec2f(.5f)) / vec2f(self.frameBufferSize); //*2.0f -1.0f;
+
+
+	const auto pq = screen * 2.0f - 1.0f - foveal;
+	const auto lr = pow(log(length(pq * resolution * 0.5f)) / L, 4.0);
+	constexpr auto pi2 = nanovdb::pi<float>()*2.0f;
+	float theta = atan2f(pq.y * resolution.y, pq.x * resolution.x)/pi2 + (pq.y < 0.0f ? 1.0f : 0.0);
+	float theta2 = atan2f(pq.y * resolution.y, -abs(pq.x) * resolution.x)/pi2 + (pq.y < 0.0f ? 1.0f : 0.0);
+
+	const auto logCoord = vec2f(lr, theta) / scaleRatio;
+	surf2Dwrite(owl::make_rgba(vec3f(logCoord.x, logCoord.y, 0.0f)), optixLaunchParams.surfacePointer, sizeof(uint32_t) * pixelIndex.x, pixelIndex.y);
+	return;
+	*/
+	/*const auto uv = vec2f(pixelIndex) / resolution * scaleRatio;
+
+	auto newPixelIndex = vec2f(pixelIndex);
+
+	if (uv.x > 1.0 || uv.y > 1.0) {
+		if (uv.y > 1.0 && uv.y < 1.0 + 1.0/resolution.y) {
+			newPixelIndex -= resolution/ scaleRatio;
+		} else {
+			return;
+		}
+	}*/
+
+
+
+	//auto screen = (vec2f(newPixelIndex) + vec2f(.5f)); //*2.0f -1.0f;
+	auto screen = (vec2f(pixelIndex) + vec2f(.5f)); //*2.0f -1.0f;
+
+	screen = logMap(scaleRatio, screen, foveal, resolution);
+	//screen = inverseLogMap(scaleRatio, screen, foveal, resolution);
+	/*surf2Dwrite(owl::make_rgba(vec3f(screen.x, screen.y, 0.0f)), optixLaunchParams.surfacePointer, sizeof(uint32_t) * pixelIndex.x, pixelIndex.y);
+	return;*/
+	screen /= vec2f(self.frameBufferSize);
+
+	owl::Ray ray;
+	ray.origin = camera.pos;
+	ray.direction = normalize(camera.dir_00 + screen.x * camera.dir_du + screen.y * camera.dir_dv);
+
+	screen = (vec2f(pixelIndex) + vec2f(.5f));
+	const auto maxL = max(
+		max(
+			length((vec2f(1, 1) - foveal) * resolution),
+			length((vec2f(1, -1) - foveal) * resolution)),
+		max(
+			length((vec2f(-1, 1) - foveal) * resolution),
+			length((vec2f(-1, -1) - foveal) * resolution)));
+	const float L = log(maxL * 0.5);
+	auto uv = scaleRatio * screen / resolution;
+
+	uv.x = pow(uv.x, 1.0f / 4.0f);
+
+
+
+	screen /= vec2f(self.frameBufferSize);
+
+
+	PerRayData prd;
+	prd.stepsScale = exp((uv.x * L));
+	owl::traceRay(self.world, ray, prd);
+
+	const auto bg1 = optixLaunchParams.bg.color1;
+	const auto bg2 = optixLaunchParams.bg.color0;
+	const auto pattern = (pixelIndex.x / 8) ^ (pixelIndex.y / 8);
+	const auto bgColor = (pattern & 1) ? bg1 : bg2;
+
+	const auto color = prd.isBackground ? bgColor : bgColor * (1.0f - prd.alpha) + prd.alpha * vec4f(prd.color, 1.0f);
+	surf2Dwrite(owl::make_rgba(color), optixLaunchParams.surfacePointer, sizeof(uint32_t) * pixelIndex.x, pixelIndex.y);
 }
 
 OPTIX_MISS_PROGRAM(miss)()
@@ -199,18 +325,29 @@ OPTIX_CLOSEST_HIT_PROGRAM(nano_closestHit)()
 		};
 
 	auto result = vec4f{};
-
+	auto& prd = owl::getPRD<PerRayData>();
+	//printf("%f \n", prd.stepsScale);
+	const auto steps = 10.0f* prd.stepsScale;
+	const auto dt = clamp((ray.t1() - ray.t0())/steps, 1.0f, 1000.0f);
 	const auto integrate = [&](auto sampleAccumulator)
 		{
 			sampleAccumulator.preAccumulate();
-			
-			while (hdda.step())
+
+			const auto acc = grid->tree().getAccessor();
+
+			for (auto t = ray.t0(); t < ray.t1(); t += dt)
+			{
+				const auto value = dt * acc.getValue(nanovdb::Coord::Floor(ray(t)));
+				sampleAccumulator.accumulate(value);
+			}
+
+			/*while (hdda.step())
 			{
 				ijk = hdda.voxel();
 				const auto value = remapSample(accessor.getValue(ijk));
 				sampleAccumulator.accumulate(value);
 				hdda.update(ray, accessor.getDim(ijk, ray));
-			}
+			}*/
 
 			sampleAccumulator.postAccumulate();
 			return sampleAccumulator.getAccumulator();
@@ -242,7 +379,7 @@ OPTIX_CLOSEST_HIT_PROGRAM(nano_closestHit)()
 	break;
 	}
 
-	auto& prd = owl::getPRD<PerRayData>();
+	//auto& prd = owl::getPRD<PerRayData>();
 
 	prd.color = vec3f{ result.x, result.y, result.z };
 	prd.alpha = result.w;
